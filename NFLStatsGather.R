@@ -25,7 +25,7 @@ for (j in 2:32) {
 
 #Get Game Data
 Games <- season_games(2017)
-
+Games$home <- recode(Games$home, JAC = "JAX")
 #Get Detailed Game Statistics by Player for the entire 2016 season.
 
 DetailedStats <- player_game(Games$GameID[1])
@@ -117,8 +117,15 @@ AggTeamGame <- merge(BetLines2016, AggTeamGame, by=c("date", "home", "away"), al
 
 #Calculate projected points based on vegas spread and over/under
 ##proj points = (OU / 2) - (Spread / 2) with logic to apply the result to the correct team.
-
+## coerce Favortie and Team to character
+AggTeamGame$Team <- as.character(AggTeamGame$Team)
+AggTeamGame$Favorite <- as.character(AggTeamGame$Favorite)
+AggTeamGame$VegasPoints <- ifelse(AggTeamGame$Team == AggTeamGame$Favorite, ((AggTeamGame$Total / 2) - (AggTeamGame$Spread / 2)), ((AggTeamGame$Total / 2) + (AggTeamGame$Spread / 2)))
 
 #Calculate correlation factor between Vegas projected points and actual fantasy points
 ## Correllation Factor = DKOffFantasyPoints / Vegas Projected Points
+AggTeamGame$CF <- (AggTeamGame$DKOffSum / AggTeamGame$VegasPoints)
+CF <- mean(AggTeamGame$CF, na.rm = TRUE)
 
+#CF by team
+CFTeam <- AggTeamGame %>% group_by(Team) %>% summarise(CFTeam=mean(CF, na.rm=TRUE))
