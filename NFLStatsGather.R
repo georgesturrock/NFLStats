@@ -7,8 +7,10 @@ library(nflscrapR)
 library(dplyr) 
 #dplyer required for group_by(), summarise()
 
-#Get NFL Teams
+#Get NFL Teams and correct team abbreviations
 NFLTeamList <- nflscrapR::nflteams
+NFLTeamList$Abbr <- recode(NFLTeamList$Abbr, JAC = "JAX", STL = "LA")
+
 
 #Get 2016 Rosters and Subset by Offensive Players Only
 NFLPlayerList2016 <- season_rosters(2016, TeamInt = NFLTeamList$Abbr[1])
@@ -37,6 +39,8 @@ for(i in 2:nrow(Games)) {
 #Import 2016 Closing Betting Lines
 ##2016betdataloc <- c(getwd(),"/data/2016bettinglines.csv")
 BetLines2016 <- read.csv("data/2016bettinglines.csv", header = TRUE)
+BetLines2016$Date <- as.Date(BetLines2016$Date, "%m/%d/%Y")
+BetLines2016 <- rename(BetLines2016, date=Date)
 
 #####################
 ### Merge Data Files
@@ -75,6 +79,9 @@ MergedDetailedStats$DKOffFantasyPoints <- MergedDetailedStats$DKPassPoints + Mer
 ## TODO Need different feed with defensive touchdowns, blocked kicks, safety and points allowed.
 MergedDetailedStats$DKDefFantasyPoints <- MergedDetailedStats$sacks + (MergedDetailedStats$defints*2) + (ifelse(MergedDetailedStats$totalrecfumbs > 0 & MergedDetailedStats$recfumbs==0, MergedDetailedStats$totalrecfumbs, 0)) + MergedDetailedStats$DKReturnPoints 
 
+#Produce list of unique players in MergedDetailedStats
+MDSUniquePlayers <- unique(MergedDetailedStats[c(1,2,5,58,59)])
+
 ####################  
 ### Aggregate Logic
 ####################
@@ -82,15 +89,36 @@ MergedDetailedStats$DKDefFantasyPoints <- MergedDetailedStats$sacks + (MergedDet
 # TODO count() and tally() to get total number of games played by player
 
 #Create aggregate fantasy points based on Team, Game and Position historical data
+#Aggregates at game level
 AggTeamGame <- MergedDetailedStats %>% group_by(Team, game.id) %>% summarise(DKOffSum=sum(DKOffFantasyPoints), DKDefSum=sum(DKDefFantasyPoints))
 AggTeamGamePos <- MergedDetailedStats %>% group_by(Team, game.id, Pos) %>% summarise(DKOffSum=sum(DKOffFantasyPoints), DKDefSum=sum(DKDefFantasyPoints))
-SDPlayer <- MergedDetailedStats %>% group_by(Team, Pos, Player) %>% summarise(DKOffSD=sd(DKOffFantasyPoints), DKOffMean=mean(DKOffFantasyPoints))
+AggTeamGamePos <- merge(AggTeamGame, AggTeamGamePos, by=c("Team", "game.id"))
+AggTeamGamePos$PctPoints <- (AggTeamGamePos$DKOffSum.y / AggTeamGamePos$DKOffSum.x)
+
+#Aggregates across history
+AggTeam <- MergedDetailedStats %>% group_by(Team) %>% summarise(DKOffSum=sum(DKOffFantasyPoints), DKDefSum=sum(DKDefFantasyPoints))
+AggTeamPos <- MergedDetailedStats %>% group_by(Team, Pos) %>% summarise(DKOffSum=sum(DKOffFantasyPoints), DKDefSum=sum(DKDefFantasyPoints))
+AggTeamPos <- merge(AggTeam, AggTeamPos, by="Team")
+AggTeamPos$PctPoints <- (AggTeamPos$DKOffSum.y / AggTeamPos$DKOffSum.x)
+AggTeamPosPlayer <- MergedDetailedStats %>% group_by(Team, Pos, playerID) %>% summarise(DKOffSum=sum(DKOffFantasyPoints), DKDefSum=sum(DKDefFantasyPoints), DKOffSD=sd(DKOffFantasyPoints), DKOffMean=mean(DKOffFantasyPoints))
+AggTeamPosPlayer <- merge(AggTeam, AggTeamPosPlayer, by="Team")
+AggTeamPosPlayer <- merge(MDSUniquePlayers, AggTeamPosPlayer, by=c("Team","Pos", "playerID"))
+AggTeamPosPlayer$PctPoints <- (AggTeamPosPlayer$DKOffSum.y / AggTeamPosPlayer$DKOffSum.x)
+#SDPlayer <- MergedDetailedStats %>% group_by(Team, Pos, Player) %>% summarise(DKOffSD=sd(DKOffFantasyPoints), DKOffMean=mean(DKOffFantasyPoints))
 
 ################################################
 #Vegas Points to DK Fanstasy Points Correlation
 ################################################
 
 #Link Bettting Line data to game.id and AggTeamGame
-## Home team = first 3 characters of underdog or favorite = "At "
-## Bridge Full Team Name to 3 char team abbreviation.  Manuall create bridge .csv file and merge into AggTeamGame before merging with betting lines.
+AggTeamGame <-  merge(Games, AggTeamGame, by.x=c("GameID"), by.y=c("game.id")) 
+# Merge Betting Lines with AggTeamGame 
+AggTeamGame <- merge(BetLines2016, AggTeamGame, by=c("date", "home", "away"), all.y = TRUE)
+
+#Calculate projected points based on vegas spread and over/under
+##proj points = (OU / 2) - (Spread / 2) with logic to apply the result to the correct team.
+
+
+#Calculate correlation factor between Vegas projected points and actual fantasy points
+## Correllation Factor = DKOffFantasyPoints / Vegas Projected Points
 
